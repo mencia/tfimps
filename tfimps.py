@@ -149,7 +149,7 @@ class Tfimps:
     def _symmetrize(self, M):
         # Symmetrize -- sufficient to guarantee transfer matrix is symmetric (but not necessary)
         M_lower = tf.matrix_band_part(M, -1, 0)
-	    M_diag = tf.matrix_band_part(M, 0, 0)
+        M_diag = tf.matrix_band_part(M, 0, 0)
         return M_lower + tf.matrix_transpose(M_lower) - M_diag
 
     def _add_variational_energy_symmetric_mps(self, hamiltonian):
@@ -292,10 +292,31 @@ if __name__ == "__main__":
     problem = pymanopt.Problem(manifold=imps.mps_manifold, cost=imps.variational_energy,
                                arg=imps.Stiefel)
 
+    mingradnorm = 1e-20
+    minstepsize = 1e-20
+
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        solver = pymanopt.solvers.ConjugateGradient(maxtime=float('inf'), maxiter=100000, mingradnorm=1e-20,
-                                                    minstepsize=1e-20)
+        solver = pymanopt.solvers.ConjugateGradient(maxtime=float('inf'), maxiter=100000, mingradnorm=mingradnorm,
+                                                    minstepsize=minstepsize)
         Xopt = solver.solve(problem)
         print(Xopt)
         print(problem.cost(Xopt))
+
+    on_wave = 1
+    wlist_1d = np.ravel(Xopt)
+    with open("logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" + str(
+            r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" + str(
+            np.random.rand(1)[0])[:5] + ".csv", "w") as out_file:
+
+        out_string = str(problem.cost(Xopt))
+        out_string += "\n"
+        out_file.write(out_string)
+
+        if on_wave == 1:
+
+            for i in range(len(wlist_1d)):
+                out_string = ""
+                out_string += str(wlist_1d[i])
+                out_string += "\n"
+                out_file.write(out_string)
