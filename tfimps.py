@@ -10,13 +10,14 @@ class Tfimps:
     Infinite Matrix Product State class.
     """
 
-    def __init__(self, phys_d, bond_d, A_matrices=None, B_matrices=None, symmetrize=True, hamiltonian=None, r_prec=1e-14):
+    def __init__(self, phys_d, bond_d, r_prec, two_site, A_matrices=None, symmetrize=False, hamiltonian=None):
         """
         :param phys_d: Physical dimension of the state e.g. 2 for spin-1/2 systems.
         :param bond_d: Bond dimension, the size of the A matrices.
         :param A_matrices: Square matrices of size `bond_d` forming the Matrix Product State.
         :param symmetrize: Boolean indicating A matrices are symmetrized.
         :param hamiltonian: Tensor of shape [phys_d, phys_d, phys_d, phys_d] giving two site Hamiltonian
+        :param two_site: Boolean indicating whether we a two-site unit cell
         """
 
         self._session = tf.Session()
@@ -26,64 +27,175 @@ class Tfimps:
         self.bond_d = bond_d
         self.hamiltonian = hamiltonian
 
-        self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d)
 
-        # Define the A
 
-        if A_matrices is None:
-            A_init = tf.reshape(self.mps_manifold.rand(), [phys_d, bond_d, bond_d])
+        if two_site:
+            self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d, k=2)
 
-        else:
-            A_init = A_matrices
+            if A_matrices is None:
+                A_init = tf.reshape(self.mps_manifold.rand(), [2, phys_d, bond_d, bond_d])
 
-        # Create Stiefel from the A
-
-        Stiefel_init = tf.reshape(A_init, [self.phys_d * self.bond_d, self.bond_d])
-
-        # Define the variational tensor variable Stiefel, and from there the A
-
-        self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
-        self.A = tf.reshape(self.Stiefel, [self.phys_d, self.bond_d, self.bond_d])
-
-        if symmetrize:
-            self.A = self._symmetrize(self.A)
-
-        self._transfer_matrix = None
-        self._right_eigenvector = None
-
-        self._all_eig = tf.self_adjoint_eig(self.transfer_matrix)
-        self._dominant_eig = None
-
-        self._variational_energy = None
-
-        if hamiltonian is not None:
-            if symmetrize:
-                self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
             else:
-                self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+                A_init = A_matrices
 
-        # TWO-SITE UNIT CELL.
-        if B_matrices is not None:
-
-            # Define B matrices.
-            B_init = B_matrices
-
-            # Gets the existing variable B_init.
-            self.B = tf.get_variable("B_matrices", initializer=B_init, trainable=True)
+            Stiefel_init = tf.reshape(A_init, [2, self.phys_d * self.bond_d, self.bond_d])
+            self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+            self.Stiefel_p = tf.reshape(self.Stiefel, [2, self.phys_d, self.bond_d, self.bond_d])
+            self.A = self.Stiefel_p[0]
+            self.B = self.Stiefel_p[0]
 
             # Define the transfer matrix, all eigenvalues and dominant eigensystem.
             # AB
-            self._transfer_matrix_2s_AB = self._add_transfer_matrix_2s('AB')
-            self._all_eig_2s_AB = tf.self_adjoint_eig(self._transfer_matrix_2s_AB)
-            self._dominant_eig_2s_AB = self._add_dominant_eig_2s('AB')
-            # BA
-            self._transfer_matrix_2s_BA = self._add_transfer_matrix_2s('BA')
-            self._all_eig_2s_BA = tf.self_adjoint_eig(self._transfer_matrix_2s_BA)
-            self._dominant_eig_2s_BA = self._add_dominant_eig_2s('BA')
+            self._transfer_matrix_2s = self._add_transfer_matrix_2s('AB')
+            self._right_eigenvector_2s = None
 
             # Define the variational energy.
             if hamiltonian is not None:
-                self.variational_e_2s = self._add_variational_e_2s(hamiltonian)
+                self.variational_energy = self._add_variational_energy_left_canonical_mps_2s(hamiltonian)
+
+        else:
+            self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d, k=1)
+
+
+            if A_matrices is None:
+                A_init = tf.reshape(self.mps_manifold.rand(), [phys_d, bond_d, bond_d])
+
+            else:
+                A_init = A_matrices
+
+            Stiefel_init = tf.reshape(A_init, [self.phys_d * self.bond_d, self.bond_d])
+            self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+            self.A = tf.reshape(self.Stiefel, [self.phys_d, self.bond_d, self.bond_d])
+
+            self._transfer_matrix = None
+            self._right_eigenvector = None
+            self._all_eig = tf.self_adjoint_eig(self.transfer_matrix)
+            self._dominant_eig = None
+
+            if hamiltonian is not None:
+                if symmetrize:
+                    self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
+                else:
+                    self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+
+
+        if symmetrize:
+            self.A = self._symmetrize(self.A)
+            self.B = self._symmetrize(self.B)
+
+        # self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d)
+
+        # Define the A
+
+        # if A_matrices is None:
+        #     A_init = tf.reshape(self.mps_manifold.rand(), [phys_d, bond_d, bond_d])
+        #
+        # else:
+        #     A_init = A_matrices
+
+        # Create Stiefel from the A
+
+        # Stiefel_init = tf.reshape(A_init, [self.phys_d * self.bond_d, self.bond_d])
+
+        # Define the variational tensor variable Stiefel, and from there the A
+
+        # self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+        # self.A = tf.reshape(self.Stiefel, [self.phys_d, self.bond_d, self.bond_d])
+
+        # if symmetrize:
+        #     self.A = self._symmetrize(self.A)
+        #     self.B = self._symmetrize(self.B)
+
+        # self._transfer_matrix = None
+        # self._right_eigenvector = None
+        # self._all_eig = tf.self_adjoint_eig(self.transfer_matrix)
+        # self._dominant_eig = None
+        # self._variational_energy = None
+
+
+        # if hamiltonian is not None:
+        #     if symmetrize:
+        #         self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
+        #     else:
+        #         self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+
+        # TWO-SITE UNIT CELL.
+        # if two_site:
+        #
+        #     # Define the variational tensor variable Stiefel, and from there the A
+        #
+        #     self.Stiefel_B = tf.get_variable("Stiefel_B_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+        #     # self.B = tf.reshape(self.Stiefel_B, [self.phys_d, self.bond_d, self.bond_d])
+        #     self.B = tf.reshape(self.Stiefel_B, [self.phys_d, self.bond_d, self.bond_d])
+        #
+        #     if symmetrize:
+        #         self.B = self._symmetrize(self.B)
+        #
+        #     # Define the transfer matrix, all eigenvalues and dominant eigensystem.
+        #     # AB
+        #     self._transfer_matrix_2s = self._add_transfer_matrix_2s('AB')
+        #     self._right_eigenvector_2s = None
+        #
+        #     # Define the variational energy.
+        #     if hamiltonian is not None:
+        #         self.variational_energy = self._add_variational_energy_left_canonical_mps_2s(hamiltonian)
+        #
+        # else:
+        #
+        #     if hamiltonian is not None:
+        #         if symmetrize:
+        #             self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
+        #         else:
+        #             self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+
+    # 2-site unit cell MPS
+
+    def _add_transfer_matrix_2s(self, ordering):
+
+        if ordering == 'AB':
+            A1 = self.A
+            A2 = self.B
+        if ordering == 'BA':
+            A1 = self.B
+            A2 = self.A
+
+        A1barA2bar = tf.einsum("sab,zbc->szac", A1, A2)
+        A1A2 = tf.einsum("sab,zbc->szac", A1, A2)
+        T = tf.einsum("szab,szcd->acbd", A1barA2bar, A1A2)
+        T = tf.reshape(T, [self.bond_d ** 2, self.bond_d ** 2])
+        return T
+
+    @property
+    def transfer_matrix_2s(self):
+        if self._transfer_matrix_2s is None:
+            self._transfer_matrix = self._add_transfer_matrix_2s('AB')
+        return self._transfer_matrix
+
+    @property
+    def right_eigenvector_2s(self):
+        if self._right_eigenvector_2s is None:
+            self._right_eigenvector_2s = self._right_eigenvector_power_method(self._transfer_matrix_2s)
+            # Normalize using left vector
+            left_vec = tf.reshape(tf.eye(self.bond_d, dtype=tf.float64), [self.bond_d ** 2])
+            norm = tf.einsum('a,a->', left_vec, self._right_eigenvector_2s)
+            self._right_eigenvector_2s = self._right_eigenvector_2s / norm
+        return self._right_eigenvector_2s
+
+    def _add_variational_energy_left_canonical_mps_2s(self, hamiltonian):
+        """
+        Evaluate the variational energy density for MPS in left canonical form
+
+        :param hamiltonian: Tensor of shape [phys_d, phys_d, phys_d, phys_d] giving two-site Hamiltonian.
+            Adopt convention that first two indices are row, second two are column.
+        :return: Expectation value of the energy density.
+        """
+        right_eigenmatrix = tf.reshape(self.right_eigenvector_2s, [self.bond_d, self.bond_d])
+        L_AAbar = tf.einsum("sab,tac->stbc", self.A, self.A)
+        BBbar_R = tf.einsum("uac,vbd,cd->uvab", self.B, self.B, right_eigenmatrix)
+        L_AAbar_BBbar_R = tf.einsum("stab,uvab->sutv", L_AAbar, BBbar_R)
+        h_exp = tf.einsum("stuv,stuv->", L_AAbar_BBbar_R, hamiltonian)
+
+        return h_exp
 
     # 1-site unit cell MPS
 
@@ -190,8 +302,9 @@ if __name__ == "__main__":
 
     # physical and bond dimensions of MPS
     phys_d = 2
-    bond_d = 4
+    bond_d = 16
     r_prec = 1e-14  # convergence condition for right eigenvector
+    two_site = False
 
     # Hamiltonian parameters
     J = 1
@@ -254,7 +367,7 @@ if __name__ == "__main__":
 
     # Initialize the MPS
 
-    imps = Tfimps(phys_d, bond_d, hamiltonian=h_ising, symmetrize=False)
+    imps = Tfimps(phys_d, bond_d, r_prec, two_site, hamiltonian=h_ising, symmetrize=False)
     problem = pymanopt.Problem(manifold=imps.mps_manifold, cost=imps.variational_energy,
                                arg=imps.Stiefel)
 
@@ -265,24 +378,29 @@ if __name__ == "__main__":
         sess.run(tf.global_variables_initializer())
         solver = pymanopt.solvers.ConjugateGradient(maxtime=float('inf'), maxiter=100000, mingradnorm=mingradnorm,
                                                     minstepsize=minstepsize)
+        import sys
+        sys.stdout = open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" +
+                          str(r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" +
+                          str(np.random.rand(1)[0])[:5] + "_2site" +str(two_site) +".csv", "w")
+
         Xopt = solver.solve(problem)
-        print(Xopt)
-        print(problem.cost(Xopt))
+        # print(Xopt)
+        # print(problem.cost(Xopt))
 
-    on_wave = 1
-    wlist_1d = np.ravel(Xopt)
-    with open("logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" + str(
-            r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" + str(
-        np.random.rand(1)[0])[:5] + ".csv", "w") as out_file:
-
-        out_string = str(problem.cost(Xopt))
-        out_string += "\n"
-        out_file.write(out_string)
-
-        if on_wave == 1:
-
-            for i in range(len(wlist_1d)):
-                out_string = ""
-                out_string += str(wlist_1d[i])
-                out_string += "\n"
-                out_file.write(out_string)
+    # on_wave = 1
+    # wlist_1d = np.ravel(Xopt)
+    # with open("logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" + str(
+    #         r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" + str(
+    #     np.random.rand(1)[0])[:5] + "_2site" + str(two_site) +".csv", "w") as out_file:
+    #
+    #     out_string = str(problem.cost(Xopt))
+    #     out_string += "\n"
+    #     out_file.write(out_string)
+    #
+    #     if on_wave == 1:
+    #
+    #         for i in range(len(wlist_1d)):
+    #             out_string = ""
+    #             out_string += str(wlist_1d[i])
+    #             out_string += "\n"
+    #             out_file.write(out_string)
