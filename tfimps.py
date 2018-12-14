@@ -83,70 +83,6 @@ class Tfimps:
             self.A = self._symmetrize(self.A)
             self.B = self._symmetrize(self.B)
 
-        # self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d)
-
-        # Define the A
-
-        # if A_matrices is None:
-        #     A_init = tf.reshape(self.mps_manifold.rand(), [phys_d, bond_d, bond_d])
-        #
-        # else:
-        #     A_init = A_matrices
-
-        # Create Stiefel from the A
-
-        # Stiefel_init = tf.reshape(A_init, [self.phys_d * self.bond_d, self.bond_d])
-
-        # Define the variational tensor variable Stiefel, and from there the A
-
-        # self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
-        # self.A = tf.reshape(self.Stiefel, [self.phys_d, self.bond_d, self.bond_d])
-
-        # if symmetrize:
-        #     self.A = self._symmetrize(self.A)
-        #     self.B = self._symmetrize(self.B)
-
-        # self._transfer_matrix = None
-        # self._right_eigenvector = None
-        # self._all_eig = tf.self_adjoint_eig(self.transfer_matrix)
-        # self._dominant_eig = None
-        # self._variational_energy = None
-
-
-        # if hamiltonian is not None:
-        #     if symmetrize:
-        #         self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
-        #     else:
-        #         self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
-
-        # TWO-SITE UNIT CELL.
-        # if two_site:
-        #
-        #     # Define the variational tensor variable Stiefel, and from there the A
-        #
-        #     self.Stiefel_B = tf.get_variable("Stiefel_B_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
-        #     # self.B = tf.reshape(self.Stiefel_B, [self.phys_d, self.bond_d, self.bond_d])
-        #     self.B = tf.reshape(self.Stiefel_B, [self.phys_d, self.bond_d, self.bond_d])
-        #
-        #     if symmetrize:
-        #         self.B = self._symmetrize(self.B)
-        #
-        #     # Define the transfer matrix, all eigenvalues and dominant eigensystem.
-        #     # AB
-        #     self._transfer_matrix_2s = self._add_transfer_matrix_2s('AB')
-        #     self._right_eigenvector_2s = None
-        #
-        #     # Define the variational energy.
-        #     if hamiltonian is not None:
-        #         self.variational_energy = self._add_variational_energy_left_canonical_mps_2s(hamiltonian)
-        #
-        # else:
-        #
-        #     if hamiltonian is not None:
-        #         if symmetrize:
-        #             self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
-        #         else:
-        #             self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
 
     # 2-site unit cell MPS
 
@@ -159,9 +95,17 @@ class Tfimps:
             A1 = self.B
             A2 = self.A
 
-        A1barA2bar = tf.einsum("sab,zbc->szac", A1, A2)
-        A1A2 = tf.einsum("sab,zbc->szac", A1, A2)
-        T = tf.einsum("szab,szcd->acbd", A1barA2bar, A1A2)
+        # A1barA2bar = tf.einsum("sab,zbc->szac", A1, A2)
+        A_prod_2 = tf.einsum("sab,zbc->szac", A1, A2)
+        #12
+        A_prod_12 = tf.einsum("zab,ybc,xcd,wde,vef,ufg,tgh,shi,rij,qjk,pkl,olm->zyxwvutsrqpoam",
+                             A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12)
+        #8
+        A_prod_8 = tf.einsum("zab,ybc,xcd,wde,vef,ufg,tgh,shi->zyxwvutsrqpoai",
+                              A1, A2, A3, A4, A5, A6, A7, A8)
+
+
+        T = tf.einsum("szab,szcd->acbd", A_prod_2, A_prod_2)
         T = tf.reshape(T, [self.bond_d ** 2, self.bond_d ** 2])
         return T
 
@@ -378,10 +322,10 @@ if __name__ == "__main__":
         sess.run(tf.global_variables_initializer())
         solver = pymanopt.solvers.ConjugateGradient(maxtime=float('inf'), maxiter=100000, mingradnorm=mingradnorm,
                                                     minstepsize=minstepsize)
-        import sys
-        sys.stdout = open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" +
-                          str(r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" +
-                          str(np.random.rand(1)[0])[:5] + "_2site" +str(two_site) +".csv", "w")
+        # import sys
+        # sys.stdout = open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" +
+        #                   str(r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" +
+        #                   str(np.random.rand(1)[0])[:5] + "_2site" +str(two_site) +".csv", "w")
 
         Xopt = solver.solve(problem)
         # print(Xopt)
