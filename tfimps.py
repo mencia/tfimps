@@ -4,18 +4,20 @@ import pymanopt.manifolds
 import pymanopt.solvers
 import tensorflow as tf
 
+
 class Tfimps:
     """
     Infinite Matrix Product State class.
     """
 
-    def __init__(self, phys_d, bond_d, A_matrices=None, symmetrize=True, hamiltonian=None, r_prec=1e-14):
+    def __init__(self, phys_d, bond_d, r_prec, two_site, A_matrices=None, symmetrize=False, hamiltonian=None):
         """
         :param phys_d: Physical dimension of the state e.g. 2 for spin-1/2 systems.
         :param bond_d: Bond dimension, the size of the A matrices.
         :param A_matrices: Square matrices of size `bond_d` forming the Matrix Product State.
         :param symmetrize: Boolean indicating A matrices are symmetrized.
         :param hamiltonian: Tensor of shape [phys_d, phys_d, phys_d, phys_d] giving two site Hamiltonian
+        :param two_site: Boolean indicating whether we a two-site unit cell
         """
 
         self._session = tf.Session()
@@ -25,105 +27,183 @@ class Tfimps:
         self.bond_d = bond_d
         self.hamiltonian = hamiltonian
 
-        self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d)
 
-        # Define the A
 
-        if A_matrices is None:
-            A_init = tf.reshape(self.mps_manifold.rand(), [phys_d, bond_d, bond_d])
+        if two_site:
+            self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d, k=2)
+
+            if A_matrices is None:
+                A_init = tf.reshape(self.mps_manifold.rand(), [2, phys_d, bond_d, bond_d])
+
+            else:
+                A_init = A_matrices
+
+            Stiefel_init = tf.reshape(A_init, [2, self.phys_d * self.bond_d, self.bond_d])
+            self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+            self.Stiefel_p = tf.reshape(self.Stiefel, [2, self.phys_d, self.bond_d, self.bond_d])
+            self.A = self.Stiefel_p[0]
+            self.B = self.Stiefel_p[0]
+
+            # Define the transfer matrix, all eigenvalues and dominant eigensystem.
+            # AB
+            self._transfer_matrix_2s = self._add_transfer_matrix_2s('AB')
+            self._right_eigenvector_2s = None
+
+            # Define the variational energy.
+            if hamiltonian is not None:
+                self.variational_energy = self._add_variational_energy_left_canonical_mps_2s(hamiltonian)
 
         else:
-            A_init = A_matrices
+            self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d, k=1)
 
-        # Create Stiefel from the A
 
-        Stiefel_init = tf.reshape(A_init, [self.phys_d * self.bond_d, self.bond_d])
+            if A_matrices is None:
+                A_init = tf.reshape(self.mps_manifold.rand(), [phys_d, bond_d, bond_d])
 
-        # Define the variational tensor variable Stiefel, and from there the A
+            else:
+                A_init = A_matrices
 
-        self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
-        self.A = tf.reshape(self.Stiefel, [self.phys_d, self.bond_d, self.bond_d])
+            Stiefel_init = tf.reshape(A_init, [self.phys_d * self.bond_d, self.bond_d])
+            self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+            self.A = tf.reshape(self.Stiefel, [self.phys_d, self.bond_d, self.bond_d])
+
+            self._transfer_matrix = None
+            self._right_eigenvector = None
+            self._all_eig = tf.self_adjoint_eig(self.transfer_matrix)
+            self._dominant_eig = None
+
+            if hamiltonian is not None:
+                if symmetrize:
+                    self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
+                else:
+                    self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+
 
         if symmetrize:
             self.A = self._symmetrize(self.A)
+            self.B = self._symmetrize(self.B)
 
-        self._transfer_matrix = None
-        self._right_eigenvector = None
+        # self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d)
 
-        self._all_eig = tf.self_adjoint_eig(self.transfer_matrix)
-        self._dominant_eig = None
+        # Define the A
 
-        self._variational_energy = None
+        # if A_matrices is None:
+        #     A_init = tf.reshape(self.mps_manifold.rand(), [phys_d, bond_d, bond_d])
+        #
+        # else:
+        #     A_init = A_matrices
 
-        if hamiltonian is not None:
-            if symmetrize:
-                self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
-            else:
-                self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+        # Create Stiefel from the A
 
-    def correlator(self, operator, range):
+        # Stiefel_init = tf.reshape(A_init, [self.phys_d * self.bond_d, self.bond_d])
+
+        # Define the variational tensor variable Stiefel, and from there the A
+
+        # self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+        # self.A = tf.reshape(self.Stiefel, [self.phys_d, self.bond_d, self.bond_d])
+
+        # if symmetrize:
+        #     self.A = self._symmetrize(self.A)
+        #     self.B = self._symmetrize(self.B)
+
+        # self._transfer_matrix = None
+        # self._right_eigenvector = None
+        # self._all_eig = tf.self_adjoint_eig(self.transfer_matrix)
+        # self._dominant_eig = None
+        # self._variational_energy = None
+
+
+        # if hamiltonian is not None:
+        #     if symmetrize:
+        #         self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
+        #     else:
+        #         self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+
+        # TWO-SITE UNIT CELL.
+        # if two_site:
+        #
+        #     # Define the variational tensor variable Stiefel, and from there the A
+        #
+        #     self.Stiefel_B = tf.get_variable("Stiefel_B_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
+        #     # self.B = tf.reshape(self.Stiefel_B, [self.phys_d, self.bond_d, self.bond_d])
+        #     self.B = tf.reshape(self.Stiefel_B, [self.phys_d, self.bond_d, self.bond_d])
+        #
+        #     if symmetrize:
+        #         self.B = self._symmetrize(self.B)
+        #
+        #     # Define the transfer matrix, all eigenvalues and dominant eigensystem.
+        #     # AB
+        #     self._transfer_matrix_2s = self._add_transfer_matrix_2s('AB')
+        #     self._right_eigenvector_2s = None
+        #
+        #     # Define the variational energy.
+        #     if hamiltonian is not None:
+        #         self.variational_energy = self._add_variational_energy_left_canonical_mps_2s(hamiltonian)
+        #
+        # else:
+        #
+        #     if hamiltonian is not None:
+        #         if symmetrize:
+        #             self.variational_energy = self._add_variational_energy_symmetric_mps(hamiltonian)
+        #         else:
+        #             self.variational_energy = self._add_variational_energy_left_canonical_mps(hamiltonian)
+
+    # 2-site unit cell MPS
+
+    def _add_transfer_matrix_2s(self, ordering):
+
+        if ordering == 'AB':
+            A1 = self.A
+            A2 = self.B
+        if ordering == 'BA':
+            A1 = self.B
+            A2 = self.A
+
+        A1barA2bar = tf.einsum("sab,zbc->szac", A1, A2)
+        A1A2 = tf.einsum("sab,zbc->szac", A1, A2)
+        T = tf.einsum("szab,szcd->acbd", A1barA2bar, A1A2)
+        T = tf.reshape(T, [self.bond_d ** 2, self.bond_d ** 2])
+        return T
+
+    @property
+    def transfer_matrix_2s(self):
+        if self._transfer_matrix_2s is None:
+            self._transfer_matrix = self._add_transfer_matrix_2s('AB')
+        return self._transfer_matrix
+
+    @property
+    def right_eigenvector_2s(self):
+        if self._right_eigenvector_2s is None:
+            self._right_eigenvector_2s = self._right_eigenvector_power_method(self._transfer_matrix_2s)
+            # Normalize using left vector
+            left_vec = tf.reshape(tf.eye(self.bond_d, dtype=tf.float64), [self.bond_d ** 2])
+            norm = tf.einsum('a,a->', left_vec, self._right_eigenvector_2s)
+            self._right_eigenvector_2s = self._right_eigenvector_2s / norm
+        return self._right_eigenvector_2s
+
+    def _add_variational_energy_left_canonical_mps_2s(self, hamiltonian):
         """
-        Evaluate the correlation function of `operator` up to `range` sites.
+        Evaluate the variational energy density for MPS in left canonical form
 
-        :param operator: Tensor of shape [phys_d, phys_d] giving single site operator.
-        :param range: Maximum separation at which correlations required
-        :return: Correlation function
+        :param hamiltonian: Tensor of shape [phys_d, phys_d, phys_d, phys_d] giving two-site Hamiltonian.
+            Adopt convention that first two indices are row, second two are column.
+        :return: Expectation value of the energy density.
         """
-        dom_eigval, dom_eigvec = self.dominant_eig
-        dom_eigmat = tf.reshape(dom_eigvec, [self.bond_d, self.bond_d])
-        
-        eigval, eigvec = self._all_eig
-        eigtens = tf.reshape(tf.transpose(eigvec), [self.bond_d**2, self.bond_d, self.bond_d])
-        
-        L_AAbar = tf.einsum("ab,sac,tbd->stcd", dom_eigmat, self.A, self.A)
-        L_AAbar_Rk = tf.einsum("stcd,kcd->kst", L_AAbar, eigtens)
-        L_AAbar_Rk_Z = tf.einsum("kst,st->k", L_AAbar_Rk, operator)
-        
-        AAbar_R = tf.einsum("sac,tbd,cd->stab", self.A, self.A, dom_eigmat)
-        Lk_AAbar_R = tf.einsum("kab,stab->kst", eigtens, AAbar_R)
-        Lk_AAbar_R_Z = tf.einsum("kst,st->k", Lk_AAbar_R, operator)
-        
-        ss_list = []
-        for n in np.arange(1,range):
-            delta = (n-1) * tf.ones([self.bond_d ** 2], tf.float64)
-            we = tf.reduce_sum(L_AAbar_Rk_Z * Lk_AAbar_R_Z * tf.pow(eigval, delta)) / dom_eigval ** (n+1)
-            ss_list.append(we)
+        right_eigenmatrix = tf.reshape(self.right_eigenvector_2s, [self.bond_d, self.bond_d])
+        L_AAbar = tf.einsum("sab,tac->stbc", self.A, self.A)
+        BBbar_R = tf.einsum("uac,vbd,cd->uvab", self.B, self.B, right_eigenmatrix)
+        L_AAbar_BBbar_R = tf.einsum("stab,uvab->sutv", L_AAbar, BBbar_R)
+        h_exp = tf.einsum("stuv,stuv->", L_AAbar_BBbar_R, hamiltonian)
 
-        return ss_list
+        return h_exp
 
-    def correlator_left_canonical_mps(self, operator, range):
-
-        right_eigenmatrix = tf.reshape(self.right_eigenvector, [self.bond_d, self.bond_d])
-        AAbar = tf.einsum("sab,tac->stbc", self.A, self.A)
-        AAbar_R = tf.einsum("udf,veg,fg->uvde", self.A, self.A, right_eigenmatrix)
-        
-        T = tf.einsum("sab,scd->acbd", self.A, self.A)
-        i = tf.constant(0)
-        iden = tf.einsum("bd,ce->bcde", tf.eye(self.bond_d,dtype=tf.float64),tf.eye(self.bond_d,dtype=tf.float64))
-        
-        ss_list = []
-        for n in np.arange(0, range):
-            condition = lambda i, next: tf.less(i, n)
-            body = lambda i, next: (tf.add(i, 1), tf.einsum("abcd,cdef->abef", T, next))
-            i_fin, T_pow = tf.while_loop(condition, body, [i, iden])
-            # No need for normalization in the LCF
-            we = tf.einsum("stbc,st,bcde,uvde,uv->", AAbar, operator, T_pow, AAbar_R, operator)
-            ss_list.append(we)
-
-        return ss_list
-
-    def single_site_expectation_value_left_canonical_mps(self, operator):
-
-        right_eigenmatrix = tf.reshape(self.right_eigenvector, [self.bond_d, self.bond_d])
-        exp_val = tf.einsum("sab,tac,bc,st->", self.A, self.A, right_eigenmatrix, operator)
-
-        return exp_val
+    # 1-site unit cell MPS
 
     @property
     def transfer_matrix(self):
         if self._transfer_matrix is None:
             T = tf.einsum("sab,scd->acbd", self.A, self.A)
-            T = tf.reshape(T, [self.bond_d**2, self.bond_d**2])
+            T = tf.reshape(T, [self.bond_d ** 2, self.bond_d ** 2])
             self._transfer_matrix = T
         return self._transfer_matrix
 
@@ -132,18 +212,17 @@ class Tfimps:
         if self._right_eigenvector is None:
             self._right_eigenvector = self._right_eigenvector_power_method(self.transfer_matrix)
             # Normalize using left vector
-            left_vec = tf.reshape(tf.eye(self.bond_d, dtype=tf.float64), [self.bond_d**2])
+            left_vec = tf.reshape(tf.eye(self.bond_d, dtype=tf.float64), [self.bond_d ** 2])
             norm = tf.einsum('a,a->', left_vec, self._right_eigenvector)
             self._right_eigenvector = self._right_eigenvector / norm
         return self._right_eigenvector
-
 
     @property
     def dominant_eig(self):
         if self._dominant_eig is None:
             eigvals, eigvecs = self._all_eig
             idx = tf.cast(tf.argmax(tf.abs(eigvals)), dtype=np.int32)
-            self._dominant_eig = eigvals[idx], eigvecs[:,idx] # Note that eigenvectors are given in columns, not rows!
+            self._dominant_eig = eigvals[idx], eigvecs[:, idx]  # Note that eigenvectors are given in columns, not rows!
         return self._dominant_eig
 
     def _symmetrize(self, M):
@@ -198,7 +277,7 @@ class Tfimps:
         AAbar_R = tf.einsum("uac,vbd,cd->uvab", self.A, self.A, right_eigenmatrix)
         L_AAbar_AAbar_R = tf.einsum("stab,uvab->sutv", L_AAbar, AAbar_R)
         h_exp_NN = tf.einsum("stuv,stuv->", L_AAbar_AAbar_R, h_NN)
-        
+
         right_eigenmatrix = tf.reshape(self.right_eigenvector, [self.bond_d, self.bond_d])
         h_exp_onsite = tf.einsum("sab,tac,bc,st->", self.A, self.A, right_eigenmatrix, h_onsite)
 
@@ -215,7 +294,6 @@ class Tfimps:
         return next_vec  # Not normalized
 
 
-
 if __name__ == "__main__":
 
     ########################
@@ -224,9 +302,10 @@ if __name__ == "__main__":
 
     # physical and bond dimensions of MPS
     phys_d = 2
-    bond_d = 4
-    r_prec = 1e-14 # convergence condition for right eigenvector
-    
+    bond_d = 16
+    r_prec = 1e-14  # convergence condition for right eigenvector
+    two_site = False
+
     # Hamiltonian parameters
     J = 1
     h = 0.48
@@ -254,7 +333,7 @@ if __name__ == "__main__":
     h_ising = -h_zz * ZZ - h_x1 * X1
 
     #################################
-    #AKLT
+    # AKLT
     #################################
 
     # phys_d = 3
@@ -288,14 +367,40 @@ if __name__ == "__main__":
 
     # Initialize the MPS
 
-    imps = Tfimps(phys_d, bond_d, hamiltonian=h_ising, symmetrize=False)
+    imps = Tfimps(phys_d, bond_d, r_prec, two_site, hamiltonian=h_ising, symmetrize=False)
     problem = pymanopt.Problem(manifold=imps.mps_manifold, cost=imps.variational_energy,
                                arg=imps.Stiefel)
 
+    mingradnorm = 1e-20
+    minstepsize = 1e-20
+
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        solver = pymanopt.solvers.ConjugateGradient(maxtime=float('inf'), maxiter=100000, mingradnorm=1e-20,
-                                                    minstepsize=1e-20)
+        solver = pymanopt.solvers.ConjugateGradient(maxtime=float('inf'), maxiter=100000, mingradnorm=mingradnorm,
+                                                    minstepsize=minstepsize)
+        import sys
+        sys.stdout = open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" +
+                          str(r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" +
+                          str(np.random.rand(1)[0])[:5] + "_2site" +str(two_site) +".csv", "w")
+
         Xopt = solver.solve(problem)
-        print(Xopt)
-        print(problem.cost(Xopt))
+        # print(Xopt)
+        # print(problem.cost(Xopt))
+
+    # on_wave = 1
+    # wlist_1d = np.ravel(Xopt)
+    # with open("logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" + str(
+    #         r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" + str(
+    #     np.random.rand(1)[0])[:5] + "_2site" + str(two_site) +".csv", "w") as out_file:
+    #
+    #     out_string = str(problem.cost(Xopt))
+    #     out_string += "\n"
+    #     out_file.write(out_string)
+    #
+    #     if on_wave == 1:
+    #
+    #         for i in range(len(wlist_1d)):
+    #             out_string = ""
+    #             out_string += str(wlist_1d[i])
+    #             out_string += "\n"
+    #             out_file.write(out_string)
