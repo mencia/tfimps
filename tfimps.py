@@ -10,7 +10,7 @@ class Tfimps:
     Infinite Matrix Product State class.
     """
 
-    def __init__(self, phys_d, bond_d, r_prec, two_site, A_matrices=None, symmetrize=False, hamiltonian=None):
+    def __init__(self, phys_d, bond_d, r_prec, uc_size, A_matrices=None, symmetrize=False, hamiltonian=None):
         """
         :param phys_d: Physical dimension of the state e.g. 2 for spin-1/2 systems.
         :param bond_d: Bond dimension, the size of the A matrices.
@@ -29,24 +29,24 @@ class Tfimps:
 
 
 
-        if two_site:
-            self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d, k=2)
+        if uc_size not 1:
+            self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d, k=uc_size)
 
             if A_matrices is None:
-                A_init = tf.reshape(self.mps_manifold.rand(), [2, phys_d, bond_d, bond_d])
+                A_init = tf.reshape(self.mps_manifold.rand(), [uc_size, phys_d, bond_d, bond_d])
 
             else:
                 A_init = A_matrices
 
-            Stiefel_init = tf.reshape(A_init, [2, self.phys_d * self.bond_d, self.bond_d])
+            Stiefel_init = tf.reshape(A_init, [uc_size, self.phys_d * self.bond_d, self.bond_d])
             self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
-            self.Stiefel_p = tf.reshape(self.Stiefel, [2, self.phys_d, self.bond_d, self.bond_d])
+            self.Stiefel_p = tf.reshape(self.Stiefel, [uc_size, self.phys_d, self.bond_d, self.bond_d])
             self.A = self.Stiefel_p[0]
             self.B = self.Stiefel_p[0]
 
             # Define the transfer matrix, all eigenvalues and dominant eigensystem.
             # AB
-            self._transfer_matrix_2s = self._add_transfer_matrix_2s('AB')
+            self._transfer_matrix_2s = self._add_transfer_matrix_2s()
             self._right_eigenvector_2s = None
 
             # Define the variational energy.
@@ -86,24 +86,20 @@ class Tfimps:
 
     # 2-site unit cell MPS
 
-    def _add_transfer_matrix_2s(self, ordering):
+    def _add_transfer_matrix_2s(self, n_sites):
 
-        if ordering == 'AB':
-            A1 = self.A
-            A2 = self.B
-        if ordering == 'BA':
-            A1 = self.B
-            A2 = self.A
+        A1 = self.A
+        A2 = self.B
 
-        # A1barA2bar = tf.einsum("sab,zbc->szac", A1, A2)
         A_prod_2 = tf.einsum("sab,zbc->szac", A1, A2)
-        #12
-        A_prod_12 = tf.einsum("zab,ybc,xcd,wde,vef,ufg,tgh,shi,rij,qjk,pkl,olm->zyxwvutsrqpoam",
-                             A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12)
+
         #8
         A_prod_8 = tf.einsum("zab,ybc,xcd,wde,vef,ufg,tgh,shi->zyxwvutsrqpoai",
                               A1, A2, A3, A4, A5, A6, A7, A8)
 
+        # 12
+        A_prod_12 = tf.einsum("zab,ybc,xcd,wde,vef,ufg,tgh,shi,rij,qjk,pkl,olm->zyxwvutsrqpoam",
+                              A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12)
 
         T = tf.einsum("szab,szcd->acbd", A_prod_2, A_prod_2)
         T = tf.reshape(T, [self.bond_d ** 2, self.bond_d ** 2])
@@ -112,7 +108,7 @@ class Tfimps:
     @property
     def transfer_matrix_2s(self):
         if self._transfer_matrix_2s is None:
-            self._transfer_matrix = self._add_transfer_matrix_2s('AB')
+            self._transfer_matrix = self._add_transfer_matrix_2s()
         return self._transfer_matrix
 
     @property
