@@ -29,7 +29,7 @@ class Tfimps:
 
 
 
-        if uc_size not 1:
+        if uc_size is not 1:
             self.mps_manifold = pymanopt.manifolds.Stiefel(phys_d * bond_d, bond_d, k=uc_size)
 
             if A_matrices is None:
@@ -244,7 +244,7 @@ if __name__ == "__main__":
     phys_d = 2
     bond_d = 16
     r_prec = 1e-14  # convergence condition for right eigenvector
-    two_site = False
+    uc_size = 12
 
     # Hamiltonian parameters
     J = 1
