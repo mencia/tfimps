@@ -42,7 +42,7 @@ class Tfimps:
             self.Stiefel = tf.get_variable("Stiefel_matrix", initializer=Stiefel_init, trainable=True, dtype=tf.float64)
             self.Stiefel_p = tf.reshape(self.Stiefel, [2, self.phys_d, self.bond_d, self.bond_d])
             self.A = self.Stiefel_p[0]
-            self.B = self.Stiefel_p[0]
+            self.B = self.Stiefel_p[1]
 
             # Define the transfer matrix, all eigenvalues and dominant eigensystem.
             # AB
