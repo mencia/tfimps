@@ -149,7 +149,7 @@ class Tfimps:
     def _symmetrize(self, M):
         # Symmetrize -- sufficient to guarantee transfer matrix is symmetric (but not necessary)
         M_lower = tf.matrix_band_part(M, -1, 0)
-	    M_diag = tf.matrix_band_part(M, 0, 0)
+        M_diag = tf.matrix_band_part(M, 0, 0)
         return M_lower + tf.matrix_transpose(M_lower) - M_diag
 
     def _add_variational_energy_symmetric_mps(self, hamiltonian):
