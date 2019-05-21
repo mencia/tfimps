@@ -4,6 +4,7 @@ import pymanopt.manifolds
 import pymanopt.solvers
 import tensorflow as tf
 from itertools import cycle
+import random
 
 
 class Tfimps:
@@ -80,7 +81,7 @@ class Tfimps:
 
 
 
-    # 2-site unit cell MPS
+    # multi-site unit cell MPS
 
     def _add_transfer_matrix_cycle(self):
 
@@ -290,10 +291,16 @@ class Tfimps:
         dim = T.shape[0]
         vec = tf.ones([dim], dtype=tf.float64)
         next_vec = tf.einsum("ab,b->a", T, vec)
+        # CHANGING POWER
         norm_big = lambda v1, v2: tf.reduce_any(
             tf.greater(tf.abs(v1 - v2), tf.constant(self.r_prec, shape=[dim], dtype=tf.float64)))
         increment = lambda v1, v2: (v2, tf.einsum("ab,b->a", T, v2))
         vec, next_vec = tf.while_loop(norm_big, increment, [vec, next_vec])
+        # FIXED POWER
+        # i = tf.constant(0)
+        # norm_big = lambda i, v: tf.less(i, 2000)
+        # increment = lambda i, v: (tf.add(i, 1), tf.einsum("ab,b->a", T, v))
+        # i_fin, next_vec = tf.while_loop(norm_big, increment, [i, next_vec])
         return next_vec  # Not normalized
 
 
@@ -303,11 +310,14 @@ if __name__ == "__main__":
     # TRANSVERSE FIELD ISING
     ########################
 
+    # seed for generation of random number
+    seed = 551
+
     # physical and bond dimensions of MPS
     phys_d = 2
-    bond_d = 8
+    bond_d = 2
     r_prec = 1e-14  # convergence condition for right eigenvector
-    uc_size = 12
+    uc_size = 1
 
     # Hamiltonian parameters
     J = 1
@@ -372,6 +382,31 @@ if __name__ == "__main__":
     #######################################################################################
     #######################################################################################
 
+    # Create initial point in Stiefel manifold
+
+    def rand_seed_Stiefel(n, p, k, seed):
+        """
+        :param n: height = phys_d*bond_d
+        :param p: width = bond_d
+        :param k: number of manifolds
+        :param seed: seed for random number generation
+        """
+
+
+        # CHECK THAT THIS SHOULD BE RANDN INSTEAD RAND!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+        np.random.seed(seed)
+        if k == 1:
+            X = np.random.randn(n, p)
+            q, r = np.linalg.qr(X)
+            return q
+
+        X = np.zeros((k, n, p))
+        for i in range(k):
+            X[i], r = np.linalg.qr(np.random.randn(n, p))
+        return X
+
     # Initialize the MPS
 
     imps = Tfimps(phys_d, bond_d, r_prec, uc_size, hamiltonian=ham, symmetrize=False)
@@ -380,18 +415,29 @@ if __name__ == "__main__":
 
     mingradnorm = 1e-20
     minstepsize = 1e-20
+    inf = float('inf')
+    maxiter = 5
 
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        solver = pymanopt.solvers.ConjugateGradient(maxtime=float('inf'), maxiter=float('inf'), mingradnorm=mingradnorm,
+        # A_init = np.load("/rscratch/bm485/Code/deeplearning/tfimps/initial/"+"Stiefel_init_d"+str(phys_d)+"_D"+str(bond_d)+
+        #                  "_uc_size"+str(uc_size)+".npy")
+        # Stiefel_init = np.reshape(A_init, [phys_d * bond_d, bond_d])
+        Stiefel_init = rand_seed_Stiefel(phys_d * bond_d, bond_d, uc_size, seed)
+        print(problem.cost(Stiefel_init))
+        solver = pymanopt.solvers.ConjugateGradient(maxtime=inf, maxiter=maxiter, mingradnorm=mingradnorm,
                                                     minstepsize=minstepsize)
 
-        import sys
-        sys.stdout = open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" +
-                          str(r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" +
-                          str(np.random.rand(1)[0])[:5] + "_uc_size" +str(uc_size) +".csv", "w")
-
-        Xopt = solver.solve(problem)
+        # THIS PRINTS IN AN OUTER FILE DURING CONVERGENCE AND STORES THE CONVERGED WAVE FUNCTION AND ENERGY IN A FILE
+        ##########################################################
+        # import sys
+        # np.random.seed()
+        # rand_number = np.random.rand(1)[0]
+        # sys.stdout = open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" +
+        #                   str(r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" +
+        #                   str(rand_number)[:5] + "_uc_size" + str(uc_size) + "_seed" + str(seed)+".csv", "w")
+        ##########################################################
+        Xopt = solver.solve(problem, x=Stiefel_init)
         wlist_1d = np.ravel(Xopt)
         print(wlist_1d)
         for i in range(len(wlist_1d)):
@@ -400,20 +446,21 @@ if __name__ == "__main__":
             out_string += "\n"
             print(out_string)
 
-    # on_wave = 1
-    # wlist_1d = np.ravel(Xopt)
-    # with open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" + str(
-    #         r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" + str(
-    #     np.random.rand(1)[0])[:5] + "_uc_size" +str(uc_size) +".csv", "w") as out_file:
-    #
-    #     out_string = str(problem.cost(Xopt))
-    #     out_string += "\n"
-    #     out_file.write(out_string)
-    #
-    #     if on_wave == 1:
-    #
-    #         for i in range(len(wlist_1d)):
-    #             out_string = ""
-    #             out_string += str(wlist_1d[i])
-    #             out_string += "\n"
-    #             out_file.write(out_string)
+    # THIS PRINTS IN THE SCREEN DURING CONVERGENCE AND STORES THE CONVERGED WAVE FUNCTION AND ENERGY IN A FILE
+    on_wave = 1
+    wlist_1d = np.ravel(Xopt)
+    with open("logging/logging" + "_physd" + str(phys_d) + "_bondD" + str(bond_d) + "_h" + str(h) + "_rprec" + str(
+            r_prec) + "_minstepsize" + str(minstepsize) + "_mingradnorm" + str(mingradnorm) + "_pr" + str(
+        np.random.rand(1)[0])[:5] + "_uc_size" +str(uc_size)  + "_seed" + str(seed)+"_maxiter"+str(maxiter)+".csv", "w") as out_file:
+
+        out_string = str(problem.cost(Xopt))
+        out_string += "\n"
+        out_file.write(out_string)
+
+        if on_wave == 1:
+
+            for i in range(len(wlist_1d)):
+                out_string = ""
+                out_string += str(wlist_1d[i])
+                out_string += "\n"
+                out_file.write(out_string)
